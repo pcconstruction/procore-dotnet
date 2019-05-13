@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -95,21 +96,44 @@ namespace Procore.Api.Core.CompanyDirectory
                 throw new ArgumentException("The company ID is not valid.", nameof(company));
             }
 
-            // Create the stream task using the HTTP client.
-            HttpResponseMessage response = await _httpClient.GetAsync($"/vapid/companies/{company}/users");
+            // Initialize the return list.
+            List<CompanyUserDetail> companyUserDetails = new List<CompanyUserDetail>();
 
-            // If the request was successful, parse and return the response.
-            if (response.IsSuccessStatusCode)
+            // Initialize the request URL.
+            string requestUrl = $"/vapid/companies/{company}/users";
+
+            // Contine to make requests until there are no more users.
+            while (requestUrl != null)
             {
                 // Create the stream task using the HTTP client.
-                string responseString = await response.Content.ReadAsStringAsync();
+                HttpResponseMessage response = await _httpClient.GetAsync(requestUrl);
 
-                // Read the stream and return the list of objects.
-                return JsonConvert.DeserializeObject<List<CompanyUserDetail>>(responseString);
+                // If the request was successful, parse and return the response.
+                if (response.IsSuccessStatusCode)
+                {
+                    // Create the stream task using the HTTP client.
+                    string responseString = await response.Content.ReadAsStringAsync();
+
+                    // Read the stream and return the list of objects.
+                    companyUserDetails.AddRange(JsonConvert.DeserializeObject<List<CompanyUserDetail>>(responseString));
+
+                    // Determine if there are any other records to fetch.
+                    if (response.Headers.Contains("link"))
+                    {
+                        requestUrl = GetNextRequestUrl(response.Headers.GetValues("link").First());
+                    }
+                    else
+                    {
+                        requestUrl = null;
+                    }
+                }
+                else
+                {
+                    throw new Exception(response.ReasonPhrase);
+                }
             }
 
-            // If the request was not successful, throw an error.
-            throw new Exception(response.ReasonPhrase);
+            return companyUserDetails;
         }
 
         /// <summary>
@@ -149,6 +173,36 @@ namespace Procore.Api.Core.CompanyDirectory
 
             // If the request was not successful, throw an error.
             throw new Exception(response.ReasonPhrase);
+        }
+
+        //---------------------------------------------------------------------
+        // Functions - Private
+        //---------------------------------------------------------------------
+
+        /// <summary>
+        ///     Parses a Procore Company User Link Header to determine if there is a next link.
+        /// </summary>
+        /// <param name="links"></param>
+        /// <returns></returns>
+        private string GetNextRequestUrl(string links)
+        {
+            // Separate the link string into individual links.
+            string[] individualLinks = links.Split(',');
+
+            foreach (var link in individualLinks.Where(link => !string.IsNullOrWhiteSpace(link)).Select(link => link))
+            {
+                // Separate the link into the URL and rel path.
+                string[] parts = link.Split(';');
+                if (parts.Length == 2)
+                {
+                    if (parts[1].Trim() == "rel=\"next\"")
+                    {
+                        return parts[0].Replace(">", string.Empty).Replace("<", string.Empty).Trim();
+                    }
+                }
+            }
+
+            return null;
         }
     }
 }
